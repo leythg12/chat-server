@@ -2,11 +2,10 @@ import socket
 import threading
 import json
 import os
-from tkinter import Tk, Text, Scrollbar, END, Label, Frame
 from cryptography.fernet import Fernet
 
 # ================== CONFIG ==================
-HOST = 'localhost'  # Remplace par ton IP Tailscale ou serveur
+HOST = '0.0.0.0'  # Écoute sur toutes les interfaces
 PORT = 2122
 USERS_FILE = "users.json"
 MESSAGES_DIR = "messages"
@@ -23,36 +22,16 @@ if os.path.exists(USERS_FILE):
 else:
     users = {}
 
-clients = {}  # Active connections: {user_id: conn}
+clients = {}  # Active connections {user_id: conn}
 
 def save_users():
     with open(USERS_FILE, 'w') as f:
         json.dump(users, f)
 
-# GUI
-root = Tk()
-root.title("Encrypted Chat Server")
-
-Label(root, text=f"Server listening on {HOST}:{PORT}").pack()
-
-chat_frame = Text(root, height=30, width=70, state='disabled')
-chat_frame.pack()
-
-scrollbar = Scrollbar(root, command=chat_frame.yview)
-scrollbar.pack(side='right', fill='y')
-chat_frame['yscrollcommand'] = scrollbar.set
-
-def log_message(msg):
-    chat_frame.config(state='normal')
-    chat_frame.insert(END, msg + "\n")
-    chat_frame.config(state='disabled')
-    chat_frame.see(END)
-
 def handle_client(conn, addr):
-    log_message(f"[+] Connected by {addr}")
+    print(f"[+] Connected by {addr}")
     user_id = None
     try:
-        # Authentication
         conn.send("User ID: ".encode('utf-8'))
         user_id = conn.recv(1024).decode('utf-8').strip()
         conn.send("Password: ".encode('utf-8'))
@@ -62,19 +41,19 @@ def handle_client(conn, addr):
             users[user_id] = password
             save_users()
             conn.send("User created.\n".encode('utf-8'))
-            log_message(f"[+] New user: {user_id}")
+            print(f"[+] New user: {user_id}")
         elif users[user_id] != password:
             conn.send("Incorrect password.\n".encode('utf-8'))
             conn.close()
-            log_message(f"[-] Incorrect password for {user_id} from {addr}")
+            print(f"[-] Incorrect password for {user_id} from {addr}")
             return
         else:
             conn.send("Successfully connected.\n".encode('utf-8'))
-            log_message(f"[+] Successful login: {user_id}")
+            print(f"[+] Successful login: {user_id}")
 
         clients[user_id] = conn
 
-        # Send offline messages if exist
+        # Envoyer les messages hors-ligne
         offline_file = os.path.join(OFFLINE_DIR, f"{user_id}.json")
         if os.path.exists(offline_file):
             with open(offline_file, 'r') as f:
@@ -96,14 +75,14 @@ def handle_client(conn, addr):
                 to_user = packet.get('to')
                 fernet = Fernet(key)
                 message = fernet.decrypt(encrypted_message).decode('utf-8')
-                log_message(f"[{user_id}] -> [{to_user}]: {message}")
+                print(f"[{user_id}] -> [{to_user}]: {message}")
 
-                # Save message history
+                # Historique
                 history_file = os.path.join(MESSAGES_DIR, f"{user_id}_to_{to_user}.txt")
                 with open(history_file, 'a') as fmsg:
                     fmsg.write(message + "\n")
 
-                # Send to recipient or store offline
+                # Envoyer ou stocker hors-ligne
                 if to_user in clients:
                     clients[to_user].send(f"[{user_id}] {message}".encode('utf-8'))
                     conn.send(f"Message sent to {to_user}\n".encode('utf-8'))
@@ -126,16 +105,16 @@ def handle_client(conn, addr):
         if user_id in clients:
             clients.pop(user_id)
         conn.close()
-        log_message(f"[-] Disconnected {addr}")
+        print(f"[-] Disconnected {addr}")
 
 def start_server():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
         s.listen()
-        log_message(f"Server started on {HOST}:{PORT}")
+        print(f"Server listening on {HOST}:{PORT}")
         while True:
             conn, addr = s.accept()
             threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
 
-threading.Thread(target=start_server, daemon=True).start()
-root.mainloop()
+if __name__ == "__main__":
+    start_server()
